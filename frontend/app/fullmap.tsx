@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   Dimensions,
   Platform,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -14,17 +15,14 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { useThemeContext } from '../src/context/ThemeContext';
 import { mapAPI } from '../src/services/api';
-import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
-const { width, height } = Dimensions.get('window');
 const KYIV = { lat: 50.4501, lng: 30.5234 };
 
 const RADIUS_OPTIONS = [
-  { value: 500, label: '500м', km: 0.5 },
-  { value: 1000, label: '1км', km: 1 },
-  { value: 2000, label: '2км', km: 2 },
-  { value: 5000, label: '5км', km: 5 },
+  { value: 1000, label: '1км' },
+  { value: 2000, label: '2км' },
+  { value: 5000, label: '5км' },
+  { value: 10000, label: '10км' },
 ];
 
 interface MapProvider {
@@ -34,33 +32,23 @@ interface MapProvider {
   lng: number;
   distanceKm: number;
   rating: number;
-  reviewsCount: number;
   isVerified: boolean;
   isPopular: boolean;
   isMobile: boolean;
-  hasAvailableSlotsToday: boolean;
-  avgResponseTimeMinutes: number;
-  matchingScore: number;
-  specializations: string[];
-  reasons: string[];
-  pinType: 'verified' | 'popular' | 'mobile' | 'standard' | 'topMatch';
 }
 
 const PIN_COLORS = {
-  topMatch: '#EF4444',
   verified: '#22C55E',
   popular: '#F59E0B',
   mobile: '#8B5CF6',
-  standard: '#64748B',
+  standard: '#3B82F6',
 };
 
-// Leaflet Map Component
-function LeafletMap({ userLocation, providers, selectedProvider, onSelectProvider, radius, colors }: any) {
+// Leaflet Map Component - Light Theme
+function LeafletMapLight({ userLocation, providers, selectedProvider, onSelectProvider, radius }: any) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
-  const userMarkerRef = useRef<any>(null);
-  const circleRef = useRef<any>(null);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || !mapContainerRef.current) return;
@@ -79,59 +67,55 @@ function LeafletMap({ userLocation, providers, selectedProvider, onSelectProvide
       if (!mapInstanceRef.current) {
         mapInstanceRef.current = L.map(mapContainerRef.current!, {
           center: [userLocation.lat, userLocation.lng],
-          zoom: 14,
-          zoomControl: false,
+          zoom: 13,
+          zoomControl: true,
         });
 
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-          attribution: '&copy; OpenStreetMap',
-          subdomains: 'abcd',
+        // Light theme
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap',
           maxZoom: 19,
         }).addTo(mapInstanceRef.current);
-
-        L.control.zoom({ position: 'bottomright' }).addTo(mapInstanceRef.current);
+      } else {
+        mapInstanceRef.current.setView([userLocation.lat, userLocation.lng], 13);
       }
 
       // User marker
-      if (userMarkerRef.current) mapInstanceRef.current.removeLayer(userMarkerRef.current);
       const userIcon = L.divIcon({
         className: 'user-marker',
-        html: `<div style="width:24px;height:24px;background:#3B82F6;border:4px solid white;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,0.3);"></div>`,
-        iconSize: [24, 24],
-        iconAnchor: [12, 12],
+        html: `<div style="width:20px;height:20px;background:#3B82F6;border:3px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3);"></div>`,
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
       });
-      userMarkerRef.current = L.marker([userLocation.lat, userLocation.lng], { icon: userIcon }).addTo(mapInstanceRef.current);
+      L.marker([userLocation.lat, userLocation.lng], { icon: userIcon, zIndexOffset: 1000 }).addTo(mapInstanceRef.current);
 
       // Radius circle
-      if (circleRef.current) mapInstanceRef.current.removeLayer(circleRef.current);
-      circleRef.current = L.circle([userLocation.lat, userLocation.lng], {
+      L.circle([userLocation.lat, userLocation.lng], {
         radius: radius,
         color: '#3B82F6',
         fillColor: '#3B82F6',
-        fillOpacity: 0.1,
+        fillOpacity: 0.08,
         weight: 2,
+        dashArray: '5, 5',
       }).addTo(mapInstanceRef.current);
 
-      // Clear old markers
-      markersRef.current.forEach(marker => mapInstanceRef.current.removeLayer(marker));
+      // Clear markers
+      markersRef.current.forEach(m => mapInstanceRef.current.removeLayer(m));
       markersRef.current = [];
 
       // Provider markers
       providers.forEach((provider: MapProvider) => {
-        const pinColor = PIN_COLORS[provider.pinType as keyof typeof PIN_COLORS] || PIN_COLORS.standard;
-        const isTopMatch = provider.pinType === 'topMatch';
-        const isSelected = selectedProvider?.id === provider.id;
-        const size = isTopMatch ? 44 : isSelected ? 40 : 36;
+        if (!provider.lat || !provider.lng) return;
+        
+        const pinColor = provider.isVerified ? PIN_COLORS.verified : 
+                         provider.isPopular ? PIN_COLORS.popular :
+                         provider.isMobile ? PIN_COLORS.mobile : PIN_COLORS.standard;
+        
+        const size = selectedProvider?.id === provider.id ? 40 : 34;
         
         const providerIcon = L.divIcon({
           className: 'provider-marker',
-          html: `<div style="
-            width:${size}px;height:${size}px;background:${pinColor};
-            border:${isSelected ? '4px' : '3px'} solid white;border-radius:50%;
-            display:flex;align-items:center;justify-content:center;
-            font-size:${isTopMatch ? 18 : 16}px;font-weight:bold;color:white;
-            box-shadow:0 2px 8px rgba(0,0,0,0.3);
-          ">${provider.name.charAt(0).toUpperCase()}</div>`,
+          html: `<div style="width:${size}px;height:${size}px;background:${pinColor};border:3px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:white;box-shadow:0 2px 8px rgba(0,0,0,0.25);cursor:pointer;">${provider.name.charAt(0).toUpperCase()}</div>`,
           iconSize: [size, size],
           iconAnchor: [size / 2, size / 2],
         });
@@ -145,99 +129,71 @@ function LeafletMap({ userLocation, providers, selectedProvider, onSelectProvide
 
       // Fit bounds
       if (providers.length > 0) {
-        const bounds = L.latLngBounds([
-          [userLocation.lat, userLocation.lng],
-          ...providers.map((p: MapProvider) => [p.lat, p.lng] as [number, number])
-        ]);
-        mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+        const allPoints = [[userLocation.lat, userLocation.lng], ...providers.filter((p: MapProvider) => p.lat && p.lng).map((p: MapProvider) => [p.lat, p.lng])];
+        const bounds = L.latLngBounds(allPoints as [number, number][]);
+        mapInstanceRef.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
       }
     };
 
     initMap();
-  }, [userLocation, providers, selectedProvider, radius]);
+  }, [userLocation, providers, selectedProvider, radius, onSelectProvider]);
 
   if (Platform.OS !== 'web') {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <Ionicons name="map" size={48} color={colors.textMuted} />
-        <Text style={{ color: colors.textSecondary, marginTop: 12 }}>Карта доступна в приложении</Text>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F3F4F6' }}>
+        <Ionicons name="map-outline" size={48} color="#9CA3AF" />
+        <Text style={{ marginTop: 12, color: '#6B7280' }}>Карта доступна в приложении</Text>
       </View>
     );
   }
 
-  return <div ref={mapContainerRef} style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />;
+  return <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />;
 }
 
 // Provider Card
 function ProviderCard({ provider, userLocation, isSelected, onSelect, colors }: any) {
-  const pinColor = PIN_COLORS[provider.pinType as keyof typeof PIN_COLORS] || PIN_COLORS.standard;
+  const pinColor = provider.isVerified ? PIN_COLORS.verified : 
+                   provider.isPopular ? PIN_COLORS.popular :
+                   provider.isMobile ? PIN_COLORS.mobile : PIN_COLORS.standard;
   
   return (
     <TouchableOpacity
-      style={[styles.providerCard, { backgroundColor: colors.card }, isSelected && { borderWidth: 2, borderColor: colors.primary }]}
+      style={[styles.providerCard, { backgroundColor: colors.card }, isSelected && { borderColor: colors.primary, borderWidth: 2 }]}
       onPress={onSelect}
-      activeOpacity={0.8}
+      activeOpacity={0.7}
     >
-      <View style={styles.cardHeader}>
+      <View style={styles.cardRow}>
         <View style={[styles.cardAvatar, { backgroundColor: pinColor }]}>
           <Text style={styles.cardAvatarText}>{provider.name.charAt(0).toUpperCase()}</Text>
         </View>
-        <View style={styles.cardInfo}>
+        <View style={styles.cardContent}>
           <Text style={[styles.cardName, { color: colors.text }]} numberOfLines={1}>{provider.name}</Text>
           <View style={styles.cardMeta}>
-            <Ionicons name="star" size={12} color="#FFB800" />
-            <Text style={[styles.cardRating, { color: colors.text }]}>{provider.rating.toFixed(1)}</Text>
+            <Ionicons name="star" size={14} color="#F59E0B" />
+            <Text style={[styles.cardRating, { color: colors.text }]}>{provider.rating > 0 ? provider.rating.toFixed(1) : '—'}</Text>
+            <Text style={[styles.cardDot, { color: colors.textSecondary }]}>•</Text>
             <Text style={[styles.cardDistance, { color: colors.textSecondary }]}>
-              • {provider.distanceKm < 1 ? `${(provider.distanceKm * 1000).toFixed(0)}м` : `${provider.distanceKm.toFixed(1)}км`}
+              {provider.distanceKm < 1 ? `${Math.round(provider.distanceKm * 1000)}м` : `${provider.distanceKm.toFixed(1)}км`}
             </Text>
           </View>
         </View>
-        {provider.matchingScore > 0 && (
-          <View style={[styles.cardScore, { backgroundColor: pinColor + '20' }]}>
-            <Text style={[styles.cardScoreText, { color: pinColor }]}>{provider.matchingScore}%</Text>
-          </View>
-        )}
+        <TouchableOpacity 
+          style={[styles.cardSelectBtn, { backgroundColor: colors.primary }]}
+          onPress={() => router.push({
+            pathname: '/direct',
+            params: { providerId: provider.id, lat: String(userLocation.lat), lng: String(userLocation.lng), providerName: provider.name }
+          })}
+        >
+          <Text style={styles.cardSelectText}>Выбрать</Text>
+        </TouchableOpacity>
       </View>
-
-      <View style={styles.cardBadges}>
-        {provider.isVerified && (
-          <View style={[styles.cardBadge, { backgroundColor: '#22C55E15' }]}>
-            <Ionicons name="shield-checkmark" size={10} color="#22C55E" />
-            <Text style={[styles.cardBadgeText, { color: '#22C55E' }]}>Проверен</Text>
-          </View>
-        )}
-        {provider.hasAvailableSlotsToday && (
-          <View style={[styles.cardBadge, { backgroundColor: '#3B82F615' }]}>
-            <Ionicons name="calendar" size={10} color="#3B82F6" />
-            <Text style={[styles.cardBadgeText, { color: '#3B82F6' }]}>Сегодня</Text>
-          </View>
-        )}
-        {provider.isMobile && (
-          <View style={[styles.cardBadge, { backgroundColor: '#8B5CF615' }]}>
-            <Ionicons name="car" size={10} color="#8B5CF6" />
-            <Text style={[styles.cardBadgeText, { color: '#8B5CF6' }]}>Выезд</Text>
-          </View>
-        )}
-      </View>
-
-      <TouchableOpacity
-        style={[styles.cardCTA, { backgroundColor: colors.primary }]}
-        onPress={() => router.push({
-          pathname: '/direct',
-          params: { providerId: provider.id, lat: String(userLocation.lat), lng: String(userLocation.lng), mode: 'explore', providerName: provider.name }
-        })}
-      >
-        <Text style={styles.cardCTAText}>Выбрать</Text>
-        <Ionicons name="arrow-forward" size={14} color="#fff" />
-      </TouchableOpacity>
     </TouchableOpacity>
   );
 }
 
-export default function FullMapScreenV7() {
+export default function FullMapScreen() {
   const { colors } = useThemeContext();
   const insets = useSafeAreaInsets();
-  const bottomSheetRef = useRef<BottomSheet>(null);
 
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [providers, setProviders] = useState<MapProvider[]>([]);
@@ -245,19 +201,17 @@ export default function FullMapScreenV7() {
   const [isLoading, setIsLoading] = useState(true);
   const [radius, setRadius] = useState(2000);
 
-  const snapPoints = useMemo(() => ['12%', '45%', '85%'], []);
-
   const requestLocation = useCallback(async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === 'granted') {
-        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-        const coords = { lat: loc.coords.latitude, lng: loc.coords.longitude };
-        setUserLocation(coords);
-        return coords;
+      if (status !== 'granted') {
+        setUserLocation(KYIV);
+        return KYIV;
       }
-      setUserLocation(KYIV);
-      return KYIV;
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const coords = { lat: loc.coords.latitude, lng: loc.coords.longitude };
+      setUserLocation(coords);
+      return coords;
     } catch {
       setUserLocation(KYIV);
       return KYIV;
@@ -267,13 +221,9 @@ export default function FullMapScreenV7() {
   const fetchProviders = useCallback(async (lat: number, lng: number, r: number) => {
     try {
       setIsLoading(true);
-      const res = await mapAPI.getNearby(lat, lng, r / 1000, 20);
-      const sorted = (res.data || []).sort((a: MapProvider, b: MapProvider) => (b.matchingScore || 0) - (a.matchingScore || 0));
-      const withTopMatch = sorted.map((p: MapProvider, i: number) => ({
-        ...p,
-        pinType: i === 0 && p.matchingScore >= 90 ? 'topMatch' : p.pinType
-      }));
-      setProviders(withTopMatch);
+      const res = await mapAPI.getNearby(lat, lng, r / 1000, 30);
+      const validProviders = (res.data || []).filter((p: MapProvider) => p.lat && p.lng && p.lat !== 0 && p.lng !== 0);
+      setProviders(validProviders);
     } catch {
       setProviders([]);
     } finally {
@@ -289,120 +239,112 @@ export default function FullMapScreenV7() {
     init();
   }, []);
 
-  const handleRadiusChange = useCallback((newRadius: number) => {
+  const handleRadiusChange = (newRadius: number) => {
     setRadius(newRadius);
     if (userLocation) fetchProviders(userLocation.lat, userLocation.lng, newRadius);
-  }, [userLocation, fetchProviders]);
+  };
 
-  const handleSelectProvider = useCallback((provider: MapProvider) => {
-    setSelectedProvider(provider);
-    bottomSheetRef.current?.snapToIndex(1);
-  }, []);
-
-  const handleRefresh = useCallback(async () => {
+  const handleRefresh = async () => {
     const loc = await requestLocation();
     await fetchProviders(loc.lat, loc.lng, radius);
-  }, [radius, fetchProviders, requestLocation]);
+  };
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={styles.mapContainer}>
-          {userLocation ? (
-            <LeafletMap userLocation={userLocation} providers={providers} selectedProvider={selectedProvider} onSelectProvider={handleSelectProvider} radius={radius} colors={colors} />
-          ) : (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={colors.primary} />
-              <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Определяем местоположение...</Text>
-            </View>
-          )}
-        </View>
-
-        <SafeAreaView edges={['top']} style={[styles.topBar, { backgroundColor: colors.card + 'F0' }]}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.topBarBtn}>
-            <Ionicons name="arrow-back" size={22} color={colors.text} />
-          </TouchableOpacity>
-          <View style={styles.topBarTitle}>
-            <Text style={[styles.topBarTitleText, { color: colors.text }]}>Карта мастеров</Text>
-            {userLocation && <Text style={[styles.topBarSubtitle, { color: colors.textSecondary }]}>{providers.length} мастеров • радиус {radius >= 1000 ? `${radius/1000}км` : `${radius}м`}</Text>}
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={styles.mapWrapper}>
+        {userLocation ? (
+          <LeafletMapLight userLocation={userLocation} providers={providers} selectedProvider={selectedProvider} onSelectProvider={setSelectedProvider} radius={radius} />
+        ) : (
+          <View style={styles.loadingWrapper}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Определяем местоположение...</Text>
           </View>
-          <TouchableOpacity onPress={handleRefresh} style={[styles.topBarBtn, { backgroundColor: colors.backgroundTertiary }]}>
-            <Ionicons name="refresh" size={20} color={colors.primary} />
-          </TouchableOpacity>
-        </SafeAreaView>
-
-        <View style={[styles.radiusSelector, { backgroundColor: colors.card + 'F0', top: insets.top + 70 }]}>
-          {RADIUS_OPTIONS.map((opt) => (
-            <TouchableOpacity key={opt.value} style={[styles.radiusBtn, { backgroundColor: radius === opt.value ? colors.primary : 'transparent' }]} onPress={() => handleRadiusChange(opt.value)}>
-              <Text style={[styles.radiusBtnText, { color: radius === opt.value ? '#fff' : colors.textSecondary }]}>{opt.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <TouchableOpacity style={[styles.quickFab, { bottom: height * 0.15 + insets.bottom }]} onPress={() => router.push('/quick-request')} activeOpacity={0.8}>
-          <Ionicons name="flash" size={24} color="#fff" />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={[styles.locationFab, { bottom: height * 0.15 + insets.bottom, backgroundColor: colors.card }]} onPress={handleRefresh} activeOpacity={0.8}>
-          <Ionicons name="locate" size={22} color={colors.primary} />
-        </TouchableOpacity>
-
-        <BottomSheet ref={bottomSheetRef} index={0} snapPoints={snapPoints} backgroundStyle={{ backgroundColor: colors.card }} handleIndicatorStyle={{ backgroundColor: colors.border, width: 40 }} enablePanDownToClose={false}>
-          <View style={styles.sheetHeader}>
-            <Text style={[styles.sheetTitle, { color: colors.text }]}>{selectedProvider ? selectedProvider.name : `${providers.length} мастеров рядом`}</Text>
-            {selectedProvider && <TouchableOpacity onPress={() => setSelectedProvider(null)}><Text style={[styles.sheetClear, { color: colors.primary }]}>Все</Text></TouchableOpacity>}
-          </View>
-          <BottomSheetScrollView contentContainerStyle={styles.sheetContent} showsVerticalScrollIndicator={false}>
-            {isLoading ? (
-              <View style={styles.sheetLoading}><ActivityIndicator color={colors.primary} /></View>
-            ) : selectedProvider ? (
-              <ProviderCard provider={selectedProvider} userLocation={userLocation || KYIV} isSelected={true} onSelect={() => {}} colors={colors} />
-            ) : (
-              providers.map((provider) => (
-                <ProviderCard key={provider.id} provider={provider} userLocation={userLocation || KYIV} isSelected={selectedProvider?.id === provider.id} onSelect={() => handleSelectProvider(provider)} colors={colors} />
-              ))
-            )}
-          </BottomSheetScrollView>
-        </BottomSheet>
+        )}
       </View>
-    </GestureHandlerRootView>
+
+      <SafeAreaView edges={['top']} style={styles.topBar}>
+        <View style={[styles.topBarInner, { backgroundColor: 'white' }]}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <Ionicons name="arrow-back" size={24} color="#1F2937" />
+          </TouchableOpacity>
+          <Text style={styles.topBarTitle}>Карта мастеров</Text>
+          <TouchableOpacity onPress={handleRefresh} style={styles.refreshBtn}>
+            <Ionicons name="refresh" size={22} color="#3B82F6" />
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+
+      <View style={[styles.radiusBar, { top: insets.top + 60 }]}>
+        {RADIUS_OPTIONS.map((opt) => (
+          <TouchableOpacity key={opt.value} style={[styles.radiusBtn, radius === opt.value && styles.radiusBtnActive]} onPress={() => handleRadiusChange(opt.value)}>
+            <Text style={[styles.radiusBtnText, radius === opt.value && styles.radiusBtnTextActive]}>{opt.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <TouchableOpacity style={[styles.quickFab, { bottom: 220 + insets.bottom }]} onPress={() => router.push('/quick-request')}>
+        <Ionicons name="flash" size={24} color="white" />
+      </TouchableOpacity>
+
+      <TouchableOpacity style={[styles.locationFab, { bottom: 220 + insets.bottom }]} onPress={handleRefresh}>
+        <Ionicons name="locate" size={22} color="#3B82F6" />
+      </TouchableOpacity>
+
+      <View style={[styles.bottomPanel, { paddingBottom: insets.bottom + 16 }]}>
+        <View style={styles.bottomHandle} />
+        <Text style={styles.bottomTitle}>{providers.length > 0 ? `${providers.length} мастеров рядом` : 'Нет мастеров в этом радиусе'}</Text>
+        {isLoading ? (
+          <ActivityIndicator color="#3B82F6" style={{ marginTop: 20 }} />
+        ) : providers.length > 0 ? (
+          <ScrollView style={styles.providersList} showsVerticalScrollIndicator={false}>
+            {providers.map((provider) => (
+              <ProviderCard key={provider.id} provider={provider} userLocation={userLocation || KYIV} isSelected={selectedProvider?.id === provider.id} onSelect={() => setSelectedProvider(provider)} colors={colors} />
+            ))}
+          </ScrollView>
+        ) : (
+          <View style={styles.emptyState}>
+            <Ionicons name="search-outline" size={40} color="#9CA3AF" />
+            <Text style={styles.emptyText}>Попробуйте увеличить радиус поиска</Text>
+          </View>
+        )}
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  mapContainer: { ...StyleSheet.absoluteFillObject, zIndex: 0 },
-  loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16 },
-  loadingText: { fontSize: 14 },
-  topBar: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
-  topBarBtn: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  topBarTitle: { flex: 1, alignItems: 'center' },
-  topBarTitleText: { fontSize: 17, fontWeight: '700' },
-  topBarSubtitle: { fontSize: 12, marginTop: 2 },
-  radiusSelector: { position: 'absolute', left: 16, flexDirection: 'row', padding: 4, borderRadius: 12, gap: 4 },
-  radiusBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 },
-  radiusBtnText: { fontSize: 13, fontWeight: '600' },
-  quickFab: { position: 'absolute', left: 16, width: 56, height: 56, borderRadius: 16, backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center' },
-  locationFab: { position: 'absolute', right: 16, width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 },
-  sheetTitle: { fontSize: 18, fontWeight: '700' },
-  sheetClear: { fontSize: 14, fontWeight: '600' },
-  sheetContent: { paddingHorizontal: 16, paddingBottom: 100, gap: 12 },
-  sheetLoading: { paddingVertical: 40 },
-  providerCard: { borderRadius: 16, padding: 16 },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
-  cardAvatar: { width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  cardAvatarText: { color: '#fff', fontSize: 20, fontWeight: '700' },
-  cardInfo: { flex: 1, marginLeft: 12 },
-  cardName: { fontSize: 16, fontWeight: '700' },
-  cardMeta: { flexDirection: 'row', alignItems: 'center', marginTop: 3, gap: 4 },
-  cardRating: { fontSize: 13, fontWeight: '600' },
-  cardDistance: { fontSize: 12 },
-  cardScore: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10 },
-  cardScoreText: { fontSize: 14, fontWeight: '700' },
-  cardBadges: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
-  cardBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, gap: 4 },
-  cardBadgeText: { fontSize: 11, fontWeight: '600' },
-  cardCTA: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 14, borderRadius: 12, gap: 8 },
-  cardCTAText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  mapWrapper: { flex: 1 },
+  loadingWrapper: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F3F4F6' },
+  loadingText: { marginTop: 12, fontSize: 14 },
+  topBar: { position: 'absolute', top: 0, left: 0, right: 0 },
+  topBarInner: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, marginHorizontal: 16, marginTop: 8, borderRadius: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4 },
+  backBtn: { padding: 4 },
+  topBarTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '600', color: '#1F2937' },
+  refreshBtn: { padding: 4 },
+  radiusBar: { position: 'absolute', left: 16, flexDirection: 'row', backgroundColor: 'white', borderRadius: 12, padding: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6, elevation: 3 },
+  radiusBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
+  radiusBtnActive: { backgroundColor: '#3B82F6' },
+  radiusBtnText: { fontSize: 13, fontWeight: '600', color: '#6B7280' },
+  radiusBtnTextActive: { color: 'white' },
+  quickFab: { position: 'absolute', left: 16, width: 52, height: 52, borderRadius: 14, backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center', shadowColor: '#EF4444', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 6 },
+  locationFab: { position: 'absolute', right: 16, width: 48, height: 48, borderRadius: 14, backgroundColor: 'white', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6, elevation: 3 },
+  bottomPanel: { backgroundColor: 'white', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: 12, paddingHorizontal: 16, minHeight: 200, maxHeight: 320, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 10 },
+  bottomHandle: { width: 40, height: 4, backgroundColor: '#E5E7EB', borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
+  bottomTitle: { fontSize: 18, fontWeight: '700', color: '#1F2937', marginBottom: 12 },
+  providersList: { flex: 1 },
+  emptyState: { alignItems: 'center', paddingVertical: 24 },
+  emptyText: { marginTop: 12, fontSize: 14, color: '#6B7280' },
+  providerCard: { borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#E5E7EB' },
+  cardRow: { flexDirection: 'row', alignItems: 'center' },
+  cardAvatar: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  cardAvatarText: { color: 'white', fontSize: 18, fontWeight: '700' },
+  cardContent: { flex: 1, marginLeft: 12 },
+  cardName: { fontSize: 15, fontWeight: '600' },
+  cardMeta: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
+  cardRating: { fontSize: 13, fontWeight: '600', marginLeft: 4 },
+  cardDot: { marginHorizontal: 6 },
+  cardDistance: { fontSize: 13 },
+  cardSelectBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10 },
+  cardSelectText: { color: 'white', fontSize: 14, fontWeight: '600' },
 });
