@@ -221,7 +221,7 @@ export default function DirectModeScreen() {
     setTimeout(() => {
       setIsBooking(false);
       router.push({
-        pathname: '/booking-confirm',
+        pathname: '/booking-confirmation',
         params: {
           providerId: data?.provider.id,
           providerName: data?.provider.name,

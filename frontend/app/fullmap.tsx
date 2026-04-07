@@ -8,6 +8,8 @@ import {
   ActivityIndicator,
   ScrollView,
   RefreshControl,
+  Animated,
+  Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -16,6 +18,7 @@ import * as Location from 'expo-location';
 import { useThemeContext } from '../src/context/ThemeContext';
 import { mapAPI } from '../src/services/api';
 
+const { width, height } = Dimensions.get('window');
 const KYIV = { lat: 50.4501, lng: 30.5234 };
 
 const RADIUS_OPTIONS = [
@@ -44,11 +47,13 @@ interface MapProvider {
 }
 
 // ═══════════════════════════════════════════════════════════
-// WEB VERSION - List View Only (no react-native-maps import!)
+// FULLMAP SCREEN - Works on all platforms
+// Web: List view with radar animation
+// Native: List view with radar animation (no actual map to avoid react-native-maps issues)
 // ═══════════════════════════════════════════════════════════
 
 export default function FullMapScreen() {
-  const { colors } = useThemeContext();
+  const { colors, isDark } = useThemeContext();
   const insets = useSafeAreaInsets();
 
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -56,6 +61,33 @@ export default function FullMapScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [radius, setRadius] = useState(1000);
   const [refreshing, setRefreshing] = useState(false);
+  const [showRadar, setShowRadar] = useState(true);
+  
+  // Radar animation
+  const radarAnim = useRef(new Animated.Value(0)).current;
+  const radarOpacity = useRef(new Animated.Value(1)).current;
+
+  // Radar pulse animation
+  useEffect(() => {
+    if (showRadar) {
+      const pulse = Animated.loop(
+        Animated.sequence([
+          Animated.timing(radarAnim, {
+            toValue: 1,
+            duration: 1500,
+            useNativeDriver: true,
+          }),
+          Animated.timing(radarAnim, {
+            toValue: 0,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      pulse.start();
+      return () => pulse.stop();
+    }
+  }, [showRadar]);
 
   const getUserLocation = useCallback(async () => {
     try {
@@ -80,11 +112,23 @@ export default function FullMapScreen() {
   const fetchProviders = useCallback(async (lat: number, lng: number, r: number) => {
     try {
       setIsLoading(true);
+      setShowRadar(true);
       const res = await mapAPI.getNearby(lat, lng, r / 1000, 50);
       const filtered = (res.data || []).filter((p: MapProvider) => p.distanceKm <= r / 1000);
       setProviders(filtered);
+      
+      // Hide radar after data loaded
+      setTimeout(() => {
+        setShowRadar(false);
+        Animated.timing(radarOpacity, {
+          toValue: 0,
+          duration: 300,
+          useNativeDriver: true,
+        }).start();
+      }, 1500);
     } catch (error) {
       setProviders([]);
+      setShowRadar(false);
     } finally {
       setIsLoading(false);
       setRefreshing(false);
@@ -101,6 +145,8 @@ export default function FullMapScreen() {
 
   const handleRadiusChange = useCallback((newRadius: number) => {
     setRadius(newRadius);
+    setShowRadar(true);
+    radarOpacity.setValue(1);
     if (userLocation) {
       fetchProviders(userLocation.lat, userLocation.lng, newRadius);
     }
@@ -108,9 +154,24 @@ export default function FullMapScreen() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
+    setShowRadar(true);
+    radarOpacity.setValue(1);
     if (userLocation) {
       await fetchProviders(userLocation.lat, userLocation.lng, radius);
     }
+  };
+
+  const handleSelectProvider = (provider: MapProvider) => {
+    router.push({
+      pathname: '/direct',
+      params: {
+        providerId: provider.id,
+        lat: String(userLocation?.lat || KYIV.lat),
+        lng: String(userLocation?.lng || KYIV.lng),
+        mode: 'explore',
+        providerName: provider.name,
+      },
+    });
   };
 
   return (
@@ -125,6 +186,64 @@ export default function FullMapScreen() {
           <Ionicons name="refresh" size={22} color={colors.primary} />
         </TouchableOpacity>
       </SafeAreaView>
+
+      {/* Radar Animation */}
+      {showRadar && (
+        <Animated.View 
+          style={[
+            styles.radarContainer, 
+            { opacity: radarOpacity }
+          ]}
+          pointerEvents="none"
+        >
+          <View style={styles.radarCenter}>
+            <Ionicons name="locate" size={24} color={colors.primary} />
+          </View>
+          <Animated.View
+            style={[
+              styles.radarPulse,
+              {
+                borderColor: colors.primary,
+                opacity: radarAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.8, 0],
+                }),
+                transform: [
+                  {
+                    scale: radarAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.5, 2.5],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          />
+          <Animated.View
+            style={[
+              styles.radarPulse,
+              {
+                borderColor: colors.primary,
+                opacity: radarAnim.interpolate({
+                  inputRange: [0, 0.5, 1],
+                  outputRange: [0, 0.6, 0],
+                }),
+                transform: [
+                  {
+                    scale: radarAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.3, 2],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          />
+          <Text style={[styles.radarText, { color: colors.textSecondary }]}>
+            Сканируем в радиусе {RADIUS_OPTIONS.find(r => r.value === radius)?.label}...
+          </Text>
+        </Animated.View>
+      )}
 
       {/* Radius Selector */}
       <View style={[styles.radiusBar, { backgroundColor: colors.card }]}>
@@ -159,14 +278,14 @@ export default function FullMapScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.primary} />
         }
       >
-        {isLoading ? (
+        {isLoading && !showRadar ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={colors.primary} />
             <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
-              Ищем мастеров в радиусе {RADIUS_OPTIONS.find(r => r.value === radius)?.label}...
+              Ищем мастеров...
             </Text>
           </View>
-        ) : providers.length === 0 ? (
+        ) : providers.length === 0 && !isLoading ? (
           <View style={styles.emptyContainer}>
             <Ionicons name="location-outline" size={48} color={colors.textMuted} />
             <Text style={[styles.emptyTitle, { color: colors.text }]}>Нет мастеров в радиусе</Text>
@@ -187,16 +306,7 @@ export default function FullMapScreen() {
               <TouchableOpacity
                 key={provider.id}
                 style={[styles.providerCard, { backgroundColor: colors.card }]}
-                onPress={() => router.push({
-                  pathname: '/direct',
-                  params: {
-                    providerId: provider.id,
-                    lat: String(userLocation?.lat || KYIV.lat),
-                    lng: String(userLocation?.lng || KYIV.lng),
-                    mode: 'explore',
-                    providerName: provider.name,
-                  },
-                })}
+                onPress={() => handleSelectProvider(provider)}
                 activeOpacity={0.7}
               >
                 <View style={styles.providerHeader}>
@@ -215,6 +325,11 @@ export default function FullMapScreen() {
                       <Text style={[styles.providerDistance, { color: colors.textSecondary }]}>
                         • {provider.distanceKm < 1 ? `${(provider.distanceKm * 1000).toFixed(0)}м` : `${provider.distanceKm.toFixed(1)}км`}
                       </Text>
+                      {provider.avgResponseTimeMinutes > 0 && (
+                        <Text style={[styles.providerResponse, { color: colors.textSecondary }]}>
+                          • ≈{provider.avgResponseTimeMinutes}мин
+                        </Text>
+                      )}
                     </View>
                   </View>
                   {provider.matchingScore > 0 && (
@@ -243,20 +358,29 @@ export default function FullMapScreen() {
                       <Text style={[styles.providerBadgeText, { color: '#8B5CF6' }]}>Выезд</Text>
                     </View>
                   )}
+                  {provider.isPopular && (
+                    <View style={[styles.providerBadge, { backgroundColor: '#F59E0B15' }]}>
+                      <Ionicons name="flame" size={10} color="#F59E0B" />
+                      <Text style={[styles.providerBadgeText, { color: '#F59E0B' }]}>Популярный</Text>
+                    </View>
+                  )}
                 </View>
+
+                {/* Reasons */}
+                {provider.reasons && provider.reasons.length > 0 && (
+                  <View style={styles.reasonsBlock}>
+                    {provider.reasons.slice(0, 2).map((reason, i) => (
+                      <View key={i} style={styles.reasonItem}>
+                        <Ionicons name="checkmark-circle" size={12} color="#10B981" />
+                        <Text style={[styles.reasonText, { color: colors.textSecondary }]}>{reason}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
 
                 <TouchableOpacity
                   style={[styles.providerCTA, { backgroundColor: colors.primary }]}
-                  onPress={() => router.push({
-                    pathname: '/direct',
-                    params: {
-                      providerId: provider.id,
-                      lat: String(userLocation?.lat || KYIV.lat),
-                      lng: String(userLocation?.lng || KYIV.lng),
-                      mode: 'explore',
-                      providerName: provider.name,
-                    },
-                  })}
+                  onPress={() => handleSelectProvider(provider)}
                 >
                   <Text style={styles.providerCTAText}>Выбрать</Text>
                   <Ionicons name="arrow-forward" size={14} color="#fff" />
@@ -269,7 +393,7 @@ export default function FullMapScreen() {
 
       {/* Quick Request FAB */}
       <TouchableOpacity
-        style={[styles.fab, { backgroundColor: colors.primary, bottom: 30 + insets.bottom }]}
+        style={[styles.fab, { backgroundColor: '#EF4444', bottom: 30 + insets.bottom }]}
         onPress={() => router.push('/quick-request')}
         activeOpacity={0.8}
       >
@@ -293,6 +417,39 @@ const styles = StyleSheet.create({
   headerTitle: { flex: 1, fontSize: 18, fontWeight: '700', textAlign: 'center' },
   refreshBtn: { padding: 4 },
   
+  // Radar
+  radarContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
+  radarCenter: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: 'rgba(59, 130, 246, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  radarPulse: {
+    position: 'absolute',
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    borderWidth: 3,
+  },
+  radarText: {
+    marginTop: 80,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+
   radiusBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -318,18 +475,24 @@ const styles = StyleSheet.create({
 
   providerCard: { borderRadius: 16, padding: 16 },
   providerHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
-  providerAvatar: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  providerAvatarText: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  providerAvatar: { width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  providerAvatarText: { color: '#fff', fontSize: 20, fontWeight: '700' },
   providerInfo: { flex: 1, marginLeft: 12 },
   providerName: { fontSize: 16, fontWeight: '700' },
   providerMeta: { flexDirection: 'row', alignItems: 'center', marginTop: 3, gap: 4 },
   providerRating: { fontSize: 13, fontWeight: '600' },
   providerDistance: { fontSize: 12 },
+  providerResponse: { fontSize: 11 },
   providerScore: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10 },
-  providerScoreText: { color: '#22C55E', fontSize: 13, fontWeight: '700' },
-  providerBadges: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 },
+  providerScoreText: { color: '#22C55E', fontSize: 14, fontWeight: '700' },
+  providerBadges: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
   providerBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, gap: 4 },
   providerBadgeText: { fontSize: 11, fontWeight: '600' },
+  
+  reasonsBlock: { marginBottom: 12 },
+  reasonItem: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
+  reasonText: { fontSize: 12 },
+  
   providerCTA: {
     flexDirection: 'row',
     alignItems: 'center',
