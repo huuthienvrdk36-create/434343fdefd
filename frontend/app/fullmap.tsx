@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   ScrollView,
   RefreshControl,
-  Animated,
   Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -47,9 +46,7 @@ interface MapProvider {
 }
 
 // ═══════════════════════════════════════════════════════════
-// FULLMAP SCREEN - Works on all platforms
-// Web: List view with radar animation
-// Native: List view with radar animation (no actual map to avoid react-native-maps issues)
+// FULLMAP SCREEN - with real map view
 // ═══════════════════════════════════════════════════════════
 
 export default function FullMapScreen() {
@@ -61,33 +58,8 @@ export default function FullMapScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [radius, setRadius] = useState(1000);
   const [refreshing, setRefreshing] = useState(false);
-  const [showRadar, setShowRadar] = useState(true);
-  
-  // Radar animation
-  const radarAnim = useRef(new Animated.Value(0)).current;
-  const radarOpacity = useRef(new Animated.Value(1)).current;
-
-  // Radar pulse animation
-  useEffect(() => {
-    if (showRadar) {
-      const pulse = Animated.loop(
-        Animated.sequence([
-          Animated.timing(radarAnim, {
-            toValue: 1,
-            duration: 1500,
-            useNativeDriver: true,
-          }),
-          Animated.timing(radarAnim, {
-            toValue: 0,
-            duration: 0,
-            useNativeDriver: true,
-          }),
-        ])
-      );
-      pulse.start();
-      return () => pulse.stop();
-    }
-  }, [showRadar]);
+  const [selectedProvider, setSelectedProvider] = useState<MapProvider | null>(null);
+  const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
 
   const getUserLocation = useCallback(async () => {
     try {
@@ -112,23 +84,11 @@ export default function FullMapScreen() {
   const fetchProviders = useCallback(async (lat: number, lng: number, r: number) => {
     try {
       setIsLoading(true);
-      setShowRadar(true);
       const res = await mapAPI.getNearby(lat, lng, r / 1000, 50);
       const filtered = (res.data || []).filter((p: MapProvider) => p.distanceKm <= r / 1000);
       setProviders(filtered);
-      
-      // Hide radar after data loaded
-      setTimeout(() => {
-        setShowRadar(false);
-        Animated.timing(radarOpacity, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: true,
-        }).start();
-      }, 1500);
     } catch (error) {
       setProviders([]);
-      setShowRadar(false);
     } finally {
       setIsLoading(false);
       setRefreshing(false);
@@ -145,8 +105,6 @@ export default function FullMapScreen() {
 
   const handleRadiusChange = useCallback((newRadius: number) => {
     setRadius(newRadius);
-    setShowRadar(true);
-    radarOpacity.setValue(1);
     if (userLocation) {
       fetchProviders(userLocation.lat, userLocation.lng, newRadius);
     }
@@ -154,8 +112,6 @@ export default function FullMapScreen() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    setShowRadar(true);
-    radarOpacity.setValue(1);
     if (userLocation) {
       await fetchProviders(userLocation.lat, userLocation.lng, radius);
     }
@@ -174,6 +130,14 @@ export default function FullMapScreen() {
     });
   };
 
+  // Build OpenStreetMap URL
+  const getMapUrl = () => {
+    if (!userLocation) return '';
+    const radiusKm = radius / 1000;
+    const delta = radiusKm * 0.02;
+    return `https://www.openstreetmap.org/export/embed.html?bbox=${userLocation.lng - delta}%2C${userLocation.lat - delta}%2C${userLocation.lng + delta}%2C${userLocation.lat + delta}&layer=mapnik&marker=${userLocation.lat}%2C${userLocation.lng}`;
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
@@ -187,63 +151,27 @@ export default function FullMapScreen() {
         </TouchableOpacity>
       </SafeAreaView>
 
-      {/* Radar Animation */}
-      {showRadar && (
-        <Animated.View 
-          style={[
-            styles.radarContainer, 
-            { opacity: radarOpacity }
-          ]}
-          pointerEvents="none"
+      {/* View Mode Toggle */}
+      <View style={[styles.toggleContainer, { backgroundColor: colors.card }]}>
+        <TouchableOpacity
+          style={[styles.toggleBtn, viewMode === 'map' && { backgroundColor: colors.primary }]}
+          onPress={() => setViewMode('map')}
         >
-          <View style={styles.radarCenter}>
-            <Ionicons name="locate" size={24} color={colors.primary} />
-          </View>
-          <Animated.View
-            style={[
-              styles.radarPulse,
-              {
-                borderColor: colors.primary,
-                opacity: radarAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0.8, 0],
-                }),
-                transform: [
-                  {
-                    scale: radarAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.5, 2.5],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          />
-          <Animated.View
-            style={[
-              styles.radarPulse,
-              {
-                borderColor: colors.primary,
-                opacity: radarAnim.interpolate({
-                  inputRange: [0, 0.5, 1],
-                  outputRange: [0, 0.6, 0],
-                }),
-                transform: [
-                  {
-                    scale: radarAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.3, 2],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          />
-          <Text style={[styles.radarText, { color: colors.textSecondary }]}>
-            Сканируем в радиусе {RADIUS_OPTIONS.find(r => r.value === radius)?.label}...
+          <Ionicons name="map" size={16} color={viewMode === 'map' ? '#fff' : colors.textSecondary} />
+          <Text style={[styles.toggleText, { color: viewMode === 'map' ? '#fff' : colors.textSecondary }]}>
+            Карта
           </Text>
-        </Animated.View>
-      )}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.toggleBtn, viewMode === 'list' && { backgroundColor: colors.primary }]}
+          onPress={() => setViewMode('list')}
+        >
+          <Ionicons name="list" size={16} color={viewMode === 'list' ? '#fff' : colors.textSecondary} />
+          <Text style={[styles.toggleText, { color: viewMode === 'list' ? '#fff' : colors.textSecondary }]}>
+            Список
+          </Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Radius Selector */}
       <View style={[styles.radiusBar, { backgroundColor: colors.card }]}>
@@ -269,127 +197,199 @@ export default function FullMapScreen() {
         </View>
       </View>
 
-      {/* Providers List */}
-      <ScrollView
-        style={styles.list}
-        contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 80 }]}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.primary} />
-        }
-      >
-        {isLoading && !showRadar ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
-              Ищем мастеров...
+      {/* Content */}
+      {viewMode === 'map' ? (
+        // Map View
+        <View style={styles.mapContainer}>
+          {Platform.OS === 'web' && userLocation ? (
+            <>
+              <iframe
+                src={getMapUrl()}
+                style={{ width: '100%', height: '100%', border: 'none' } as any}
+                title="Map"
+              />
+              {/* Markers overlay */}
+              <View style={styles.markersOverlay} pointerEvents="box-none">
+                {providers.slice(0, 10).map((provider, index) => {
+                  const angle = (index / providers.length) * Math.PI * 2;
+                  const distance = Math.min(provider.distanceKm * 30, 40);
+                  const left = 50 + Math.cos(angle) * distance;
+                  const top = 50 + Math.sin(angle) * distance;
+
+                  return (
+                    <TouchableOpacity
+                      key={provider.id}
+                      style={[
+                        styles.marker,
+                        {
+                          left: `${left}%`,
+                          top: `${top}%`,
+                          backgroundColor: provider.isVerified ? '#22C55E' : 
+                                           provider.isPopular ? '#F59E0B' : 
+                                           provider.isMobile ? '#8B5CF6' : colors.primary,
+                        }
+                      ]}
+                      onPress={() => setSelectedProvider(provider)}
+                    >
+                      <Text style={styles.markerText}>{provider.name.charAt(0)}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+                {/* User location */}
+                <View style={[styles.userMarker, { left: '50%', top: '50%' }]}>
+                  <View style={styles.userDot} />
+                </View>
+              </View>
+            </>
+          ) : (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={colors.primary} />
+            </View>
+          )}
+
+          {/* Selected provider card */}
+          {selectedProvider && (
+            <View style={[styles.selectedCard, { backgroundColor: colors.card, bottom: 80 + insets.bottom }]}>
+              <View style={styles.selectedHeader}>
+                <View style={[styles.selectedAvatar, { backgroundColor: selectedProvider.isVerified ? '#22C55E' : colors.primary }]}>
+                  <Text style={styles.selectedAvatarText}>{selectedProvider.name.charAt(0)}</Text>
+                </View>
+                <View style={styles.selectedInfo}>
+                  <Text style={[styles.selectedName, { color: colors.text }]} numberOfLines={1}>
+                    {selectedProvider.name}
+                  </Text>
+                  <View style={styles.selectedMeta}>
+                    <Ionicons name="star" size={12} color="#FFB800" />
+                    <Text style={[styles.selectedRating, { color: colors.text }]}>
+                      {selectedProvider.rating.toFixed(1)}
+                    </Text>
+                    <Text style={[styles.selectedDistance, { color: colors.textSecondary }]}>
+                      • {selectedProvider.distanceKm < 1 ? `${(selectedProvider.distanceKm * 1000).toFixed(0)}м` : `${selectedProvider.distanceKm.toFixed(1)}км`}
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity onPress={() => setSelectedProvider(null)}>
+                  <Ionicons name="close-circle" size={24} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+              <TouchableOpacity
+                style={[styles.selectedCTA, { backgroundColor: colors.primary }]}
+                onPress={() => handleSelectProvider(selectedProvider)}
+              >
+                <Text style={styles.selectedCTAText}>Выбрать мастера</Text>
+                <Ionicons name="arrow-forward" size={16} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Provider count badge */}
+          <View style={[styles.countBadge, { backgroundColor: colors.card }]}>
+            <Ionicons name="location" size={14} color={colors.primary} />
+            <Text style={[styles.countText, { color: colors.text }]}>
+              {providers.length} мастеров в радиусе {RADIUS_OPTIONS.find(r => r.value === radius)?.label}
             </Text>
           </View>
-        ) : providers.length === 0 && !isLoading ? (
-          <View style={styles.emptyContainer}>
-            <Ionicons name="location-outline" size={48} color={colors.textMuted} />
-            <Text style={[styles.emptyTitle, { color: colors.text }]}>Нет мастеров в радиусе</Text>
-            <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-              Попробуйте увеличить радиус поиска
-            </Text>
-          </View>
-        ) : (
-          <>
-            <View style={styles.listHeader}>
-              <Ionicons name="location" size={16} color={colors.primary} />
-              <Text style={[styles.listHeaderText, { color: colors.text }]}>
-                {providers.length} мастеров в радиусе {RADIUS_OPTIONS.find(r => r.value === radius)?.label}
+        </View>
+      ) : (
+        // List View
+        <ScrollView
+          style={styles.list}
+          contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 80 }]}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.primary} />
+          }
+        >
+          {isLoading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+                Ищем мастеров...
               </Text>
             </View>
+          ) : providers.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="location-outline" size={48} color={colors.textMuted} />
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>Нет мастеров в радиусе</Text>
+              <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+                Попробуйте увеличить радиус поиска
+              </Text>
+            </View>
+          ) : (
+            <>
+              <View style={styles.listHeader}>
+                <Ionicons name="location" size={16} color={colors.primary} />
+                <Text style={[styles.listHeaderText, { color: colors.text }]}>
+                  {providers.length} мастеров в радиусе {RADIUS_OPTIONS.find(r => r.value === radius)?.label}
+                </Text>
+              </View>
 
-            {providers.map((provider) => (
-              <TouchableOpacity
-                key={provider.id}
-                style={[styles.providerCard, { backgroundColor: colors.card }]}
-                onPress={() => handleSelectProvider(provider)}
-                activeOpacity={0.7}
-              >
-                <View style={styles.providerHeader}>
-                  <View style={[styles.providerAvatar, { backgroundColor: provider.isVerified ? '#22C55E' : colors.primary }]}>
-                    <Text style={styles.providerAvatarText}>{provider.name.charAt(0).toUpperCase()}</Text>
-                  </View>
-                  <View style={styles.providerInfo}>
-                    <Text style={[styles.providerName, { color: colors.text }]} numberOfLines={1}>
-                      {provider.name}
-                    </Text>
-                    <View style={styles.providerMeta}>
-                      <Ionicons name="star" size={12} color="#FFB800" />
-                      <Text style={[styles.providerRating, { color: colors.text }]}>
-                        {provider.rating > 0 ? provider.rating.toFixed(1) : '—'}
-                      </Text>
-                      <Text style={[styles.providerDistance, { color: colors.textSecondary }]}>
-                        • {provider.distanceKm < 1 ? `${(provider.distanceKm * 1000).toFixed(0)}м` : `${provider.distanceKm.toFixed(1)}км`}
-                      </Text>
-                      {provider.avgResponseTimeMinutes > 0 && (
-                        <Text style={[styles.providerResponse, { color: colors.textSecondary }]}>
-                          • ≈{provider.avgResponseTimeMinutes}мин
-                        </Text>
-                      )}
-                    </View>
-                  </View>
-                  {provider.matchingScore > 0 && (
-                    <View style={[styles.providerScore, { backgroundColor: '#22C55E20' }]}>
-                      <Text style={styles.providerScoreText}>{provider.matchingScore}%</Text>
-                    </View>
-                  )}
-                </View>
-
-                <View style={styles.providerBadges}>
-                  {provider.isVerified && (
-                    <View style={[styles.providerBadge, { backgroundColor: '#22C55E15' }]}>
-                      <Ionicons name="shield-checkmark" size={10} color="#22C55E" />
-                      <Text style={[styles.providerBadgeText, { color: '#22C55E' }]}>Проверен</Text>
-                    </View>
-                  )}
-                  {provider.hasAvailableSlotsToday && (
-                    <View style={[styles.providerBadge, { backgroundColor: '#3B82F615' }]}>
-                      <Ionicons name="calendar" size={10} color="#3B82F6" />
-                      <Text style={[styles.providerBadgeText, { color: '#3B82F6' }]}>Сегодня</Text>
-                    </View>
-                  )}
-                  {provider.isMobile && (
-                    <View style={[styles.providerBadge, { backgroundColor: '#8B5CF615' }]}>
-                      <Ionicons name="car" size={10} color="#8B5CF6" />
-                      <Text style={[styles.providerBadgeText, { color: '#8B5CF6' }]}>Выезд</Text>
-                    </View>
-                  )}
-                  {provider.isPopular && (
-                    <View style={[styles.providerBadge, { backgroundColor: '#F59E0B15' }]}>
-                      <Ionicons name="flame" size={10} color="#F59E0B" />
-                      <Text style={[styles.providerBadgeText, { color: '#F59E0B' }]}>Популярный</Text>
-                    </View>
-                  )}
-                </View>
-
-                {/* Reasons */}
-                {provider.reasons && provider.reasons.length > 0 && (
-                  <View style={styles.reasonsBlock}>
-                    {provider.reasons.slice(0, 2).map((reason, i) => (
-                      <View key={i} style={styles.reasonItem}>
-                        <Ionicons name="checkmark-circle" size={12} color="#10B981" />
-                        <Text style={[styles.reasonText, { color: colors.textSecondary }]}>{reason}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
+              {providers.map((provider) => (
                 <TouchableOpacity
-                  style={[styles.providerCTA, { backgroundColor: colors.primary }]}
+                  key={provider.id}
+                  style={[styles.providerCard, { backgroundColor: colors.card }]}
                   onPress={() => handleSelectProvider(provider)}
+                  activeOpacity={0.7}
                 >
-                  <Text style={styles.providerCTAText}>Выбрать</Text>
-                  <Ionicons name="arrow-forward" size={14} color="#fff" />
+                  <View style={styles.providerHeader}>
+                    <View style={[styles.providerAvatar, { backgroundColor: provider.isVerified ? '#22C55E' : colors.primary }]}>
+                      <Text style={styles.providerAvatarText}>{provider.name.charAt(0).toUpperCase()}</Text>
+                    </View>
+                    <View style={styles.providerInfo}>
+                      <Text style={[styles.providerName, { color: colors.text }]} numberOfLines={1}>
+                        {provider.name}
+                      </Text>
+                      <View style={styles.providerMeta}>
+                        <Ionicons name="star" size={12} color="#FFB800" />
+                        <Text style={[styles.providerRating, { color: colors.text }]}>
+                          {provider.rating > 0 ? provider.rating.toFixed(1) : '—'}
+                        </Text>
+                        <Text style={[styles.providerDistance, { color: colors.textSecondary }]}>
+                          • {provider.distanceKm < 1 ? `${(provider.distanceKm * 1000).toFixed(0)}м` : `${provider.distanceKm.toFixed(1)}км`}
+                        </Text>
+                      </View>
+                    </View>
+                    {provider.matchingScore > 0 && (
+                      <View style={[styles.providerScore, { backgroundColor: '#22C55E20' }]}>
+                        <Text style={styles.providerScoreText}>{provider.matchingScore}%</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={styles.providerBadges}>
+                    {provider.isVerified && (
+                      <View style={[styles.providerBadge, { backgroundColor: '#22C55E15' }]}>
+                        <Ionicons name="shield-checkmark" size={10} color="#22C55E" />
+                        <Text style={[styles.providerBadgeText, { color: '#22C55E' }]}>Проверен</Text>
+                      </View>
+                    )}
+                    {provider.hasAvailableSlotsToday && (
+                      <View style={[styles.providerBadge, { backgroundColor: '#3B82F615' }]}>
+                        <Ionicons name="calendar" size={10} color="#3B82F6" />
+                        <Text style={[styles.providerBadgeText, { color: '#3B82F6' }]}>Сегодня</Text>
+                      </View>
+                    )}
+                    {provider.isMobile && (
+                      <View style={[styles.providerBadge, { backgroundColor: '#8B5CF615' }]}>
+                        <Ionicons name="car" size={10} color="#8B5CF6" />
+                        <Text style={[styles.providerBadgeText, { color: '#8B5CF6' }]}>Выезд</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.providerCTA, { backgroundColor: colors.primary }]}
+                    onPress={() => handleSelectProvider(provider)}
+                  >
+                    <Text style={styles.providerCTAText}>Выбрать</Text>
+                    <Ionicons name="arrow-forward" size={14} color="#fff" />
+                  </TouchableOpacity>
                 </TouchableOpacity>
-              </TouchableOpacity>
-            ))}
-          </>
-        )}
-      </ScrollView>
+              ))}
+            </>
+          )}
+        </ScrollView>
+      )}
 
       {/* Quick Request FAB */}
       <TouchableOpacity
@@ -416,55 +416,118 @@ const styles = StyleSheet.create({
   backBtn: { padding: 4 },
   headerTitle: { flex: 1, fontSize: 18, fontWeight: '700', textAlign: 'center' },
   refreshBtn: { padding: 4 },
-  
-  // Radar
-  radarContainer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+
+  // Toggle
+  toggleContainer: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 4,
+    borderRadius: 12,
+    gap: 4,
+  },
+  toggleBtn: {
+    flex: 1,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    gap: 6,
   },
-  radarCenter: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: 'rgba(59, 130, 246, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 2,
-  },
-  radarPulse: {
-    position: 'absolute',
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    borderWidth: 3,
-  },
-  radarText: {
-    marginTop: 80,
-    fontSize: 14,
-    fontWeight: '500',
+  toggleText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
 
   radiusBar: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 12,
+    paddingVertical: 10,
+    marginTop: 8,
+    marginHorizontal: 16,
+    borderRadius: 12,
+    gap: 10,
   },
-  radiusLabel: { fontSize: 14 },
-  radiusButtons: { flex: 1, flexDirection: 'row', gap: 8 },
-  radiusBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10 },
-  radiusBtnText: { fontSize: 13, fontWeight: '600' },
+  radiusLabel: { fontSize: 13 },
+  radiusButtons: { flex: 1, flexDirection: 'row', gap: 6 },
+  radiusBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  radiusBtnText: { fontSize: 12, fontWeight: '600' },
 
+  // Map
+  mapContainer: { flex: 1, position: 'relative' },
+  markersOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    pointerEvents: 'box-none',
+  },
+  marker: {
+    position: 'absolute',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: -18,
+    marginTop: -18,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  markerText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  userMarker: {
+    position: 'absolute',
+    marginLeft: -10,
+    marginTop: -10,
+  },
+  userDot: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#3B82F6',
+    borderWidth: 3,
+    borderColor: '#fff',
+  },
+  countBadge: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    gap: 6,
+  },
+  countText: { fontSize: 12, fontWeight: '600' },
+  selectedCard: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    borderRadius: 16,
+    padding: 16,
+  },
+  selectedHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  selectedAvatar: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  selectedAvatarText: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  selectedInfo: { flex: 1, marginLeft: 12 },
+  selectedName: { fontSize: 16, fontWeight: '700' },
+  selectedMeta: { flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 4 },
+  selectedRating: { fontSize: 13, fontWeight: '600' },
+  selectedDistance: { fontSize: 12 },
+  selectedCTA: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 12,
+    gap: 8,
+  },
+  selectedCTAText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+
+  // List
   list: { flex: 1 },
   listContent: { padding: 16, gap: 12 },
-  loadingContainer: { alignItems: 'center', justifyContent: 'center', paddingTop: 60, gap: 16 },
+  loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60, gap: 16 },
   loadingText: { fontSize: 14 },
   emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingTop: 60, gap: 12 },
   emptyTitle: { fontSize: 18, fontWeight: '700' },
@@ -482,17 +545,11 @@ const styles = StyleSheet.create({
   providerMeta: { flexDirection: 'row', alignItems: 'center', marginTop: 3, gap: 4 },
   providerRating: { fontSize: 13, fontWeight: '600' },
   providerDistance: { fontSize: 12 },
-  providerResponse: { fontSize: 11 },
   providerScore: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10 },
   providerScoreText: { color: '#22C55E', fontSize: 14, fontWeight: '700' },
   providerBadges: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
   providerBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, gap: 4 },
   providerBadgeText: { fontSize: 11, fontWeight: '600' },
-  
-  reasonsBlock: { marginBottom: 12 },
-  reasonItem: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
-  reasonText: { fontSize: 12 },
-  
   providerCTA: {
     flexDirection: 'row',
     alignItems: 'center',
